@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function active(uid) { return !exists(/databases/$(database)/documents/accountDeletions/$(uid)); }
+    function collectionAllowed(kind) { return kind in ['modules','assignments','exams','studySessions','calendarEvents','assessments','notes','goals','notifications']; }
+    function time(value) { return value is int && value > 0 && value < 5000000000000; }
+    function label(value) { return value is string && value.size() > 0 && value.size() <= 100; }
+    function range(value, low, high) { return value is number && value >= low && value <= high; }
+    function validProfile(d) {
+      return d.keys().hasOnly(['firstName','lastName','institution','qualification','studyYear','academicYear','periodType','period','timezone','studyDays','sessionMinutes','breakMinutes','dailyGoal','preferredTime','theme','reminders','browserNotifications','inApp','achievements','onboarded'])
+        && label(d.firstName) && d.lastName is string && d.lastName.size() <= 100
+        && label(d.institution) && label(d.qualification) && d.onboarded == true
+        && d.periodType in ['Semester','Term'] && range(d.period,1,d.periodType == 'Semester' ? 2 : 4)
+        && range(d.studyYear,1,12) && range(d.academicYear,2000,2100) && label(d.timezone)
+        && d.studyDays is list && d.studyDays.size() > 0 && d.studyDays.size() <= 7 && d.studyDays.hasOnly([0,1,2,3,4,5,6])
+        && range(d.sessionMinutes,5,180) && range(d.breakMinutes,0,120) && range(d.dailyGoal,0,720)
+        && d.preferredTime in ['Morning','Afternoon','Evening'] && d.theme in ['system','light','dark']
+        && d.reminders is list && d.reminders.size() <= 8 && d.browserNotifications is bool && d.inApp is bool && d.achievements is bool;
+    }
+    function validRecord(kind, id, d) {
+      return d.id == id && time(d.createdAt) && (
+        (kind == 'modules' && label(d.name) && label(d.code) && d.archived is bool && d.color is string && d.color.matches('^#[0-9a-fA-F]{6}$') && range(d.target,0,100) && range(d.confidence,1,5) && range(d.difficulty,1,5)) ||
+        (kind == 'assignments' && label(d.title) && label(d.moduleId) && time(d.due) && d.priority in ['Low','Medium','High'] && d.status in ['Not started','In progress','Completed','Submitted'] && range(d.weight,0,100) && range(d.estimate,15,6000) && d.checklist is list && d.checklist.size() <= 50) ||
+        (kind == 'exams' && label(d.title) && label(d.moduleId) && time(d.start) && range(d.minutes,15,720) && range(d.studyGoal,0,6000) && range(d.importance,1,5) && d.topics is list && d.topics.size() <= 50) ||
+        (kind == 'studySessions' && label(d.title) && d.moduleId is string && time(d.start) && range(d.minutes,1,720) && (d.completedAt == 0 || time(d.completedAt)) && d.source in ['manual','planner','focus']) ||
+        (kind == 'calendarEvents' && label(d.title) && d.moduleId is string && time(d.start) && range(d.minutes,1,1440) && d.eventType in ['Class','Test','Personal']) ||
+        (kind == 'assessments' && label(d.title) && label(d.moduleId) && time(d.date) && range(d.maximum,0.01,10000) && range(d.obtained,0,d.maximum) && range(d.weight,0,100) && d.assessmentType in ['Assignment','Test','Quiz','Practical','Exam']) ||
+        (kind == 'notes' && label(d.title) && d.moduleId is string && d.pinned is bool && d.content is string && d.content.size() <= 40000 && d.tags is list && d.tags.size() <= 20) ||
+        (kind == 'goals' && label(d.title) && d.mode in ['Study hours this week','Streak days','Early submissions','Modules studied this week','Current module grade','Manual'] && range(d.target,0.01,10000) && range(d.progress,0,10000)) ||
+        (kind == 'notifications' && time(d.readAt))
+      );
+    }
+    match /users/{uid} {
+      allow get: if owner(uid);
+      allow create, update: if owner(uid) && active(uid) && validProfile(request.resource.data);
+      match /pushDevices/{device} {
+        allow delete: if owner(uid) && active(uid);
+        allow create, update: if owner(uid) && active(uid)
+          && request.resource.data.keys().hasOnly(['token','updatedAt','expiresAt'])
+          && request.resource.data.token is string && request.resource.data.token.size() > 0 && request.resource.data.token.size() <= 4096
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.expiresAt is timestamp && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt < request.time + duration.value(46,'d');
+      }
+      match /{kind}/{id} {
+        allow read, delete: if owner(uid) && collectionAllowed(kind) && active(uid);
+        allow create, update: if owner(uid) && collectionAllowed(kind) && active(uid) && validRecord(kind,id,request.resource.data);
+      }
+    }
+  }
+}

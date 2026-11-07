@@ -1,0 +1,8 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "accountDeletions", "fieldPath": "expiresAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "pushDevices", "fieldPath": "expiresAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "pushDeliveries", "fieldPath": "expiresAt", "ttl": true, "indexes": [] }
+  ]
+}
